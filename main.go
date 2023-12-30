@@ -51,7 +51,7 @@ func main() {
 
 	ctx := context.Background()
 
-	_, err = app.Auth(ctx)
+	authClient, err := app.Auth(ctx)
 	if err != nil {
 		log.Fatalf("error getting Auth client: %v\n", err)
 	}
@@ -64,6 +64,10 @@ func main() {
 	e.POST("/statement", routes.HandleCreateStatement(firestoreClient))
 	e.GET("/statement", routes.HandleGetRandomStatement(firestoreClient))
 	e.POST("/reaction", routes.HandleCreateReaction(firestoreClient))
+	e.GET("/profile", routes.HandleGetProfileInformation(firestoreClient))
+	e.GET("/stats", routes.HandleGetStats(firestoreClient))
+	e.GET("/auth/login", routes.HandleLogin(authClient))
+	e.GET("/auth/getUser", routes.HandleGetCurrentUser(authClient))
 
 	e.Logger.Fatal(e.Start(":8080"))
 }
