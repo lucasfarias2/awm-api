@@ -32,7 +32,7 @@ type Reaction struct {
 	StatementID string       `json:"statement_id"`
 	UserID      string       `json:"user_id"`
 	Reaction    ReactionType `json:"reaction"`
-	CreatedAt   time.Time
+	CreatedAt   time.Time    `json:"created_at"`
 }
 
 func HandleCreateReaction(client *firestore.Client) echo.HandlerFunc {

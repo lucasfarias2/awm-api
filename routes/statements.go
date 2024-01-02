@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"google.golang.org/api/iterator"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"time"
@@ -48,16 +49,22 @@ func HandleCreateStatement(client *firestore.Client) echo.HandlerFunc {
 	}
 }
 
+type Response struct {
+	Statement           StatementResponse `json:"statement"`
+	AgreedPercentage    float64           `json:"agreed_percentage"`
+	DisagreedPercentage float64           `json:"disagreed_percentage"`
+}
+
 func HandleGetRandomStatement(client *firestore.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		ctx := context.Background()
 
 		userId := c.QueryParams().Get("user_id")
 
-		iterStatements := client.Collection("statements").Where("UserID", "!=", userId).Limit(100).Documents(ctx)
+		iterStatements := client.Collection("statements").Where("UserID", "!=", userId).Limit(1000).Documents(ctx)
 		defer iterStatements.Stop()
 
-		iterReactions := client.Collection("reactions").Where("UserID", "==", userId).Limit(100).Documents(ctx)
+		iterReactions := client.Collection("reactions").Where("UserID", "==", userId).Limit(1000).Documents(ctx)
 		defer iterReactions.Stop()
 
 		reactedStatementIDs := make(map[string]struct{})
@@ -109,7 +116,56 @@ func HandleGetRandomStatement(client *firestore.Client) echo.HandlerFunc {
 
 		if maxV > minV {
 			randN := r.Intn(maxV-minV) + minV
-			return c.JSON(http.StatusOK, statements[randN])
+			selectedStatement := statements[randN]
+
+			var agreedCount, disagreedCount int
+
+			itStatsReactions := client.Collection("reactions").Where("StatementID", "==", selectedStatement.ID).Limit(1000).Documents(ctx)
+			defer itStatsReactions.Stop()
+
+			var statsReactions []Reaction
+			for {
+				doc, err := itStatsReactions.Next()
+				if errors.Is(err, iterator.Done) {
+					break
+				}
+				if err != nil {
+					log.Fatalf("Failed to iterate: %v", err)
+				}
+
+				var statReaction Reaction
+				if err := doc.DataTo(&statReaction); err != nil {
+					log.Fatalf("Failed to read document: %v", err)
+				}
+
+				statsReactions = append(statsReactions, statReaction)
+			}
+
+			for _, reaction := range statsReactions {
+				if reaction.StatementID == selectedStatement.ID {
+					switch reaction.Reaction {
+					case Agreed:
+						agreedCount++
+					case Disagreed:
+						disagreedCount++
+					}
+				}
+			}
+
+			totalReactions := agreedCount + disagreedCount
+			var agreedPercentage, disagreedPercentage float64
+			if totalReactions > 0 {
+				agreedPercentage = float64(agreedCount) / float64(totalReactions) * 100
+				disagreedPercentage = float64(disagreedCount) / float64(totalReactions) * 100
+			}
+
+			response := Response{
+				Statement:           selectedStatement,
+				AgreedPercentage:    math.Round(agreedPercentage*100) / 100,
+				DisagreedPercentage: math.Round(disagreedPercentage*100) / 100,
+			}
+
+			return c.JSON(http.StatusOK, response)
 		} else {
 			return c.JSON(http.StatusOK, nil)
 		}
