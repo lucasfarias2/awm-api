@@ -4,10 +4,10 @@ import (
 	"cloud.google.com/go/firestore"
 	"context"
 	"errors"
+	"firebase.google.com/go/auth"
 	"github.com/labstack/echo/v4"
 	"google.golang.org/api/iterator"
 	"log"
-	"math"
 	"math/rand"
 	"net/http"
 	"time"
@@ -15,8 +15,13 @@ import (
 
 type StatementRequest struct {
 	Text      string    `json:"text"`
-	UserID    string    `json:"user_id"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateStatementRequest struct {
+	Text      string
+	UserID    string
+	CreatedAt time.Time
 }
 
 type StatementResponse struct {
@@ -26,19 +31,77 @@ type StatementResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func HandleCreateStatement(client *firestore.Client) echo.HandlerFunc {
+func HandleGetUserStatements(client *firestore.Client, auth *auth.Client) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		ctx := context.Background()
+
+		session := c.Request().Header.Get("session")
+		token, err := auth.VerifySessionCookieAndCheckRevoked(ctx, session)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
+		user, err := auth.GetUser(ctx, token.UID)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
+
+		userId := user.UID
+
+		iterStatements := client.Collection("statements").Where("UserID", "==", userId).Limit(1000).Documents(ctx)
+		defer iterStatements.Stop()
+
+		// iterate over statements and push to array and return that at the end
+		var statements []StatementResponse
+		for {
+			doc, err := iterStatements.Next()
+			if errors.Is(err, iterator.Done) {
+				break // Exit the loop when all documents have been read
+			}
+			if err != nil {
+				log.Fatalf("Failed to iterate: %v", err)
+			}
+
+			var statement StatementResponse
+			if err := doc.DataTo(&statement); err != nil {
+				log.Fatalf("Failed to read document: %v", err)
+			}
+
+			statement.ID = doc.Ref.ID
+
+			statements = append(statements, statement)
+		}
+
+		return c.JSON(http.StatusOK, statements)
+	}
+}
+
+func HandleCreateStatement(client *firestore.Client, auth *auth.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		ctx := context.Background()
 		location, err := time.LoadLocation("CET")
+
+		session := c.Request().Header.Get("session")
+		token, err := auth.VerifySessionCookieAndCheckRevoked(ctx, session)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
+		user, err := auth.GetUser(ctx, token.UID)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
 
 		var req StatementRequest
 		if err := c.Bind(&req); err != nil {
 			log.Printf("Failed to bind request: %v", err)
 		}
 
-		newS, _, err := client.Collection("statements").Add(ctx, StatementRequest{
+		newS, _, err := client.Collection("statements").Add(ctx, CreateStatementRequest{
 			Text:      req.Text,
-			UserID:    req.UserID,
+			UserID:    user.UID,
 			CreatedAt: time.Now().In(location),
 		})
 		if err != nil {
@@ -50,16 +113,26 @@ func HandleCreateStatement(client *firestore.Client) echo.HandlerFunc {
 }
 
 type Response struct {
-	Statement           StatementResponse `json:"statement"`
-	AgreedPercentage    float64           `json:"agreed_percentage"`
-	DisagreedPercentage float64           `json:"disagreed_percentage"`
+	Statement StatementResponse `json:"statement"`
 }
 
-func HandleGetRandomStatement(client *firestore.Client) echo.HandlerFunc {
+func HandleGetRandomStatement(client *firestore.Client, auth *auth.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		ctx := context.Background()
 
-		userId := c.QueryParams().Get("user_id")
+		session := c.Request().Header.Get("session")
+		token, err := auth.VerifySessionCookieAndCheckRevoked(ctx, session)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
+		user, err := auth.GetUser(ctx, token.UID)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
+
+		userId := user.UID
 
 		iterStatements := client.Collection("statements").Where("UserID", "!=", userId).Limit(1000).Documents(ctx)
 		defer iterStatements.Stop()
@@ -118,8 +191,6 @@ func HandleGetRandomStatement(client *firestore.Client) echo.HandlerFunc {
 			randN := r.Intn(maxV-minV) + minV
 			selectedStatement := statements[randN]
 
-			var agreedCount, disagreedCount int
-
 			itStatsReactions := client.Collection("reactions").Where("StatementID", "==", selectedStatement.ID).Limit(1000).Documents(ctx)
 			defer itStatsReactions.Stop()
 
@@ -141,28 +212,8 @@ func HandleGetRandomStatement(client *firestore.Client) echo.HandlerFunc {
 				statsReactions = append(statsReactions, statReaction)
 			}
 
-			for _, reaction := range statsReactions {
-				if reaction.StatementID == selectedStatement.ID {
-					switch reaction.Reaction {
-					case Agreed:
-						agreedCount++
-					case Disagreed:
-						disagreedCount++
-					}
-				}
-			}
-
-			totalReactions := agreedCount + disagreedCount
-			var agreedPercentage, disagreedPercentage float64
-			if totalReactions > 0 {
-				agreedPercentage = float64(agreedCount) / float64(totalReactions) * 100
-				disagreedPercentage = float64(disagreedCount) / float64(totalReactions) * 100
-			}
-
 			response := Response{
-				Statement:           selectedStatement,
-				AgreedPercentage:    math.Round(agreedPercentage*100) / 100,
-				DisagreedPercentage: math.Round(disagreedPercentage*100) / 100,
+				Statement: selectedStatement,
 			}
 
 			return c.JSON(http.StatusOK, response)

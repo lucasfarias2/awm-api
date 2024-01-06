@@ -3,6 +3,7 @@ package routes
 import (
 	"cloud.google.com/go/firestore"
 	"context"
+	"firebase.google.com/go/auth"
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"log"
@@ -13,9 +14,9 @@ import (
 type ReactionType string
 
 const (
-	Agreed    ReactionType = "agreed"
-	Disagreed ReactionType = "disagreed"
-	Skipped   ReactionType = "skipped"
+	Agreed    ReactionType = "agree"
+	Disagreed ReactionType = "disagree"
+	Skipped   ReactionType = "skip"
 )
 
 // Validate checks if the reaction type is valid
@@ -30,12 +31,18 @@ func (r ReactionType) Validate() error {
 
 type Reaction struct {
 	StatementID string       `json:"statement_id"`
-	UserID      string       `json:"user_id"`
 	Reaction    ReactionType `json:"reaction"`
 	CreatedAt   time.Time    `json:"created_at"`
 }
 
-func HandleCreateReaction(client *firestore.Client) echo.HandlerFunc {
+type NewReactionRequest struct {
+	StatementID string
+	Reaction    ReactionType
+	UserID      string
+	CreatedAt   time.Time
+}
+
+func HandleCreateReaction(client *firestore.Client, auth *auth.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		ctx := context.Background()
 		location, err := time.LoadLocation("CET")
@@ -45,9 +52,21 @@ func HandleCreateReaction(client *firestore.Client) echo.HandlerFunc {
 			log.Fatalf("Failed to bind request: %v", err)
 		}
 
-		newReac, _, err := client.Collection("reactions").Add(ctx, Reaction{
+		session := c.Request().Header.Get("session")
+		token, err := auth.VerifySessionCookieAndCheckRevoked(ctx, session)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
+		user, err := auth.GetUser(ctx, token.UID)
+		if err != nil {
+			log.Printf("Failed to authenticate request: %v", err)
+			return err
+		}
+
+		newReac, _, err := client.Collection("reactions").Add(ctx, NewReactionRequest{
 			StatementID: req.StatementID,
-			UserID:      req.UserID,
+			UserID:      user.UID,
 			Reaction:    req.Reaction,
 			CreatedAt:   time.Now().In(location),
 		})
