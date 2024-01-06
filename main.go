@@ -66,8 +66,8 @@ func main() {
 	e.POST("/reaction", routes.HandleCreateReaction(firestoreClient))
 	e.GET("/profile", routes.HandleGetProfileInformation(firestoreClient))
 	e.GET("/stats", routes.HandleGetStats(firestoreClient))
-	e.GET("/auth/login", routes.HandleLogin(authClient))
-	e.GET("/auth/getUser", routes.HandleGetCurrentUser(authClient))
+	e.POST("/api/v1/auth/login", routes.HandleLogin(authClient))
+	e.GET("/api/v1/auth/user", routes.HandleGetCurrentUser(authClient))
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

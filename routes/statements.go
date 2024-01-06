@@ -33,7 +33,7 @@ func HandleCreateStatement(client *firestore.Client) echo.HandlerFunc {
 
 		var req StatementRequest
 		if err := c.Bind(&req); err != nil {
-			log.Fatalf("Failed to bind request: %v", err)
+			log.Printf("Failed to bind request: %v", err)
 		}
 
 		newS, _, err := client.Collection("statements").Add(ctx, StatementRequest{
@@ -130,12 +130,12 @@ func HandleGetRandomStatement(client *firestore.Client) echo.HandlerFunc {
 					break
 				}
 				if err != nil {
-					log.Fatalf("Failed to iterate: %v", err)
+					log.Printf("Failed to iterate: %v", err)
 				}
 
 				var statReaction Reaction
 				if err := doc.DataTo(&statReaction); err != nil {
-					log.Fatalf("Failed to read document: %v", err)
+					log.Printf("Failed to read document: %v", err)
 				}
 
 				statsReactions = append(statsReactions, statReaction)
